@@ -12,16 +12,13 @@ from videollava.utils import disable_torch_init
 from videollava.mm_utils import process_images, tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria
 
 from PIL import Image
-import requests
-from io import BytesIO
 from transformers import TextStreamer
 
 
 def main(args):
-    # disabilita inizializzazione di Torch per risparmiare tempo
     disable_torch_init()
 
-    # Caricamento modello e tokenizer
+    # Caricamento modello
     model_name = get_model_name_from_path(args.model_path)
     tokenizer, model, processor, context_len = load_pretrained_model(
         args.model_path,
@@ -34,7 +31,7 @@ def main(args):
     )
     image_processor, video_processor = processor['image'], processor['video']
 
-    # Imposta la modalità di conversazione
+    # Imposta modalità conversazione
     if 'llama-2' in model_name.lower():
         conv_mode = "llava_llama_2"
     elif "v1" in model_name.lower():
@@ -49,14 +46,20 @@ def main(args):
     else:
         args.conv_mode = conv_mode
 
-    # Inizializza template di conversazione
-    conv = conv_templates[args.conv_mode].copy()
-    roles = ('user', 'assistant') if "mpt" in model_name.lower() else conv.roles
+    roles = ('user', 'assistant') if "mpt" in model_name.lower() else conv_templates[args.conv_mode].roles
 
-    # Per ogni clip in input, esegue un ciclo interattivo di Q&A
+    # Domande automatiche da eseguire su ogni clip
+    questions = [
+        "Cosa succede in questa clip?",
+        "Quante persone sono presenti e cosa stanno facendo?",
+        "Ci sono oggetti rilevanti o azioni importanti?",
+    ]
+
+    # Per ogni clip
     for clip_path in args.file:
-        # Preprocess della clip (video o immagine)
         ext = os.path.splitext(clip_path)[-1].lower()
+
+        # Preprocessing
         if ext in image_ext:
             tensor = image_processor.preprocess(clip_path, return_tensors='pt')['pixel_values'][0]
         elif ext in video_ext:
@@ -64,26 +67,23 @@ def main(args):
         else:
             print(f"[ERROR] Estensione non supportata per {clip_path}")
             continue
+
         tensor = tensor.to(model.device, dtype=torch.float16)
 
-        # Segnali speciali per il modello multimodale
         if ext in image_ext:
             special_token = [DEFAULT_IMAGE_TOKEN]
         else:
             special_token = [DEFAULT_IMAGE_TOKEN] * model.get_video_tower().config.num_frames
 
-        print(f"\n--- Analisi interattiva di {clip_path} ---")
-        is_first = True
-        while True:
-            try:
-                inp = input(f"{roles[0]}: ")
-            except EOFError:
-                inp = ""
-            if not inp:
-                print(f"Chiusura sessione su {clip_path}")
-                break
+        print(f"\n--- Analisi automatica di {clip_path} ---")
 
-            # Preparazione prompt
+        conv = conv_templates[args.conv_mode].copy()
+
+        is_first = True
+        for question in questions:
+            inp = question
+            print(f"{roles[0]}: {inp}")
+
             if is_first:
                 if getattr(model.config, "mm_use_im_start_end", False):
                     prefix = ''.join([DEFAULT_IM_START_TOKEN + t + DEFAULT_IM_END_TOKEN for t in special_token])
@@ -96,7 +96,6 @@ def main(args):
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
 
-            # Tokenizzazione delle immagini
             input_ids = tokenizer_image_token(
                 prompt,
                 tokenizer,
@@ -104,12 +103,10 @@ def main(args):
                 return_tensors='pt'
             ).unsqueeze(0).to(model.device)
 
-            # Imposta criteri di stop
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
             streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
-            # Generazione della risposta
             with torch.inference_mode():
                 output_ids = model.generate(
                     input_ids,
@@ -122,10 +119,9 @@ def main(args):
                     stopping_criteria=[stopping_criteria]
                 )
 
-            # Decodifica e stampa
             outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
             conv.messages[-1][-1] = outputs
-            print(outputs)
+            print(f"{roles[1]}: {outputs}")
 
             if args.debug:
                 print(f"\n[DEBUG] prompt:\n{prompt}\noutput:\n{outputs}\n")
@@ -148,7 +144,6 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    # Se specificata una directory, costruisce automaticamente args.file
     if args.input_dir:
         all_files = sorted(os.listdir(args.input_dir))
         args.file = [os.path.join(args.input_dir, f)
