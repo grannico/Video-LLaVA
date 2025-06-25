@@ -2,17 +2,21 @@ import argparse
 import os
 
 import torch
+from PIL import Image
+from transformers import TextStreamer
 
-from videollava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
-from videollava.constants import DEFAULT_VIDEO_TOKEN
+from videollava.constants import (
+    IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN,
+    DEFAULT_VIDEO_TOKEN
+)
 from videollava.conversation import conv_templates, SeparatorStyle
 from videollava.model.builder import load_pretrained_model
 from videollava.serve.utils import load_image, image_ext, video_ext
 from videollava.utils import disable_torch_init
-from videollava.mm_utils import process_images, tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria
-
-from PIL import Image
-from transformers import TextStreamer
+from videollava.mm_utils import (
+    process_images, tokenizer_image_token, get_model_name_from_path,
+    KeywordsStoppingCriteria
+)
 
 
 def main(args):
@@ -48,11 +52,18 @@ def main(args):
 
     roles = ('user', 'assistant') if "mpt" in model_name.lower() else conv_templates[args.conv_mode].roles
 
-    # Domande automatiche da eseguire su ogni clip
+    # Domande specifiche per video di recensione di fucili
     questions = [
         "Cosa succede in questa clip?",
-        "Quante persone sono presenti e cosa stanno facendo?",
-        "Ci sono oggetti rilevanti o azioni importanti?",
+        "Che modello di fucile viene mostrato o recensito?",
+        "Viene descritto qualche dettaglio tecnico del fucile? Se sì, quali?",
+        "Viene mostrato il funzionamento pratico del fucile? Ad esempio, il caricamento, lo sparo o il meccanismo interno?",
+        "Ci sono commenti o opinioni sulle prestazioni del fucile? Se sì, quali?",
+        "Sono menzionati o mostrati accessori, modifiche o personalizzazioni del fucile?",
+        "Vengono mostrati test di tiro o prove pratiche? Se sì, su quali bersagli e con quali risultati?",
+        "Viene fatto un confronto con altri modelli di fucile o armi simili?",
+        "Ci sono indicazioni sull’utilizzo previsto del fucile? (Es. caccia, tiro sportivo, softair, difesa, collezionismo)",
+        "L’utente parla di pregi e difetti? Se sì, quali vengono evidenziati?",
     ]
 
     # Per ogni clip
@@ -105,7 +116,9 @@ def main(args):
 
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
-            streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+
+            # Gestione dello streamer opzionale
+            streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) if args.live else None
 
             with torch.inference_mode():
                 output_ids = model.generate(
@@ -114,14 +127,16 @@ def main(args):
                     do_sample=bool(args.temperature > 0),
                     temperature=args.temperature,
                     max_new_tokens=args.max_new_tokens,
-                    streamer=streamer,
                     use_cache=True,
-                    stopping_criteria=[stopping_criteria]
+                    stopping_criteria=[stopping_criteria],
+                    streamer=streamer
                 )
 
             outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
             conv.messages[-1][-1] = outputs
-            print(f"{roles[1]}: {outputs}")
+
+            if not args.live:
+                print(f"{roles[1]}: {outputs}")
 
             if args.debug:
                 print(f"\n[DEBUG] prompt:\n{prompt}\noutput:\n{outputs}\n")
@@ -142,6 +157,8 @@ if __name__ == "__main__":
     parser.add_argument("--load-8bit", action="store_true")
     parser.add_argument("--load-4bit", action="store_true")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--live", action="store_true",
+                        help="Mostra l'output in tempo reale durante la generazione (TextStreamer)")
     args = parser.parse_args()
 
     if args.input_dir:
