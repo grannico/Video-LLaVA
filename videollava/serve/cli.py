@@ -3,19 +3,17 @@ import os
 import json
 
 import torch
-from PIL import Image
 from transformers import TextStreamer
 
 from videollava.constants import (
-    IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN,
-    DEFAULT_VIDEO_TOKEN
+    IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 )
 from videollava.conversation import conv_templates, SeparatorStyle
 from videollava.model.builder import load_pretrained_model
-from videollava.serve.utils import load_image, image_ext, video_ext
+from videollava.serve.utils import image_ext, video_ext
 from videollava.utils import disable_torch_init
 from videollava.mm_utils import (
-    process_images, tokenizer_image_token, get_model_name_from_path,
+    tokenizer_image_token, get_model_name_from_path,
     KeywordsStoppingCriteria
 )
 
@@ -53,7 +51,7 @@ def main(args):
 
     roles = ('user', 'assistant') if "mpt" in model_name.lower() else conv_templates[args.conv_mode].roles
 
-    # Domande specifiche per video di recensione di fucili
+    # Domande
     questions = [
         "Cosa succede in questa clip?",
         "Che modello di fucile viene mostrato o recensito?",
@@ -67,14 +65,11 @@ def main(args):
         "L’utente parla di pregi e difetti? Se sì, quali vengono evidenziati?"
     ]
 
-    # Dizionario per raccogliere i risultati
     results = {}
 
-    # Per ogni clip
     for clip_path in args.file:
         ext = os.path.splitext(clip_path)[-1].lower()
 
-        # Preprocessing
         if ext in image_ext:
             tensor = image_processor.preprocess(clip_path, return_tensors='pt')['pixel_values'][0]
         elif ext in video_ext:
@@ -85,10 +80,8 @@ def main(args):
 
         tensor = tensor.to(model.device, dtype=torch.float16)
 
-        if ext in image_ext:
-            special_token = [DEFAULT_IMAGE_TOKEN]
-        else:
-            special_token = [DEFAULT_IMAGE_TOKEN] * model.get_video_tower().config.num_frames
+        special_token = ([DEFAULT_IMAGE_TOKEN] if ext in image_ext
+                          else [DEFAULT_IMAGE_TOKEN] * model.get_video_tower().config.num_frames)
 
         print(f"\n--- Analisi automatica di {clip_path} ---")
 
@@ -138,7 +131,8 @@ def main(args):
                     streamer=streamer
                 )
 
-            outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
+            outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:], skip_special_tokens=True).strip()
+
             conv.messages[-1][-1] = outputs
 
             if not args.live:
@@ -147,15 +141,36 @@ def main(args):
             if args.debug:
                 print(f"\n[DEBUG] prompt:\n{prompt}\noutput:\n{outputs}\n")
 
-            # Salva la risposta nel dizionario dei risultati
             results[clip_name][question] = outputs
 
-    # Salva i risultati su file JSON
-    output_filename = args.output_json if args.output_json else "results.json"
-    with open(output_filename, "w", encoding="utf-8") as f:
+    # Salva il JSON
+    output_json = args.output_json if args.output_json else "results.json"
+    with open(output_json, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=4)
 
-    print(f"\nRisultati salvati su {output_filename}")
+    print(f"\nRisultati salvati su {output_json}")
+
+    # 🔥 Genera il prompt TXT per la LLM esterna
+    output_txt = args.output_txt if args.output_txt else "summary_prompt.txt"
+
+    with open(output_txt, "w", encoding="utf-8") as f:
+        f.write("Ti fornirò una serie di domande seguite dalle risposte ottenute dall'analisi automatica di alcune clip video.\n")
+        f.write("Il tuo compito è leggere tutte le risposte fornite e rispondere nuovamente a queste stesse domande, sintetizzando e combinando le informazioni provenienti da tutte le clip, in modo da fornire delle risposte più complete e accurate.\n")
+        f.write("\n---\n\n")
+
+        for clip, qa in results.items():
+            f.write(f"🔹 Clip: {clip}\n")
+            for question in questions:
+                answer = qa.get(question, "Nessuna risposta")
+                f.write(f"- Domanda: {question}\n")
+                f.write(f"  Risposta: {answer}\n\n")
+            f.write("\n---\n\n")
+
+        f.write("🔥 Ora rispondi nuovamente alle seguenti domande tenendo conto di tutte le informazioni fornite sopra:\n\n")
+        for question in questions:
+            f.write(f"- {question}\n")
+
+    print(f"Prompt per la LLM esterna salvato su {output_txt}")
 
 
 if __name__ == "__main__":
@@ -177,6 +192,9 @@ if __name__ == "__main__":
                         help="Mostra l'output in tempo reale durante la generazione (TextStreamer)")
     parser.add_argument("--output-json", type=str, default=None,
                         help="File JSON dove salvare i risultati (default: results.json)")
+    parser.add_argument("--output-txt", type=str, default=None,
+                        help="File TXT dove salvare il prompt per la LLM esterna (default: summary_prompt.txt)")
+
     args = parser.parse_args()
 
     if args.input_dir:
