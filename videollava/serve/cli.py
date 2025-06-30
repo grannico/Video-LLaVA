@@ -154,21 +154,23 @@ def main(args):
     output_txt = args.output_txt if args.output_txt else "summary_prompt.txt"
 
     with open(output_txt, "w", encoding="utf-8") as f:
-        f.write("Ti fornirò una serie di domande seguite dalle risposte ottenute dall'analisi automatica di alcune clip video.\n")
-        f.write("Il tuo compito è leggere tutte le risposte fornite e rispondere nuovamente a queste stesse domande, sintetizzando e combinando le informazioni provenienti da tutte le clip, in modo da fornire delle risposte più complete e accurate.\n")
-        f.write("\n---\n\n")
+        f.write("Ti fornirò una serie di domande, seguite dalle risposte ottenute dall'analisi automatica di diverse clip estratte dallo stesso video.\n")
+        f.write("Il tuo compito è leggere tutte le risposte fornite e rispondere nuovamente a queste stesse domande, sintetizzando e combinando le informazioni provenienti da tutte le clip, in modo da fornire delle risposte più complete, accurate e affidabili rispetto a quanto osservato nell'intero video.\n\n")
+        f.write("---\n\n")
 
         for clip, qa in results.items():
             f.write(f"🔹 Clip: {clip}\n")
             for question in questions:
-                answer = qa.get(question, "Nessuna risposta")
-                f.write(f"- Domanda: {question}\n")
-                f.write(f"  Risposta: {answer}\n\n")
-            f.write("\n---\n\n")
+                answer = qa.get(question, "Nessuna risposta.")
+                f.write(f"Domanda: {question}\n")
+                f.write(f"Risposta: {answer}\n\n")
+            f.write("---\n\n")
 
-        f.write("🔥 Ora rispondi nuovamente alle seguenti domande tenendo conto di tutte le informazioni fornite sopra:\n\n")
+        f.write("🔥 Ora rispondi nuovamente alle seguenti domande, tenendo conto di tutte le informazioni fornite sopra, come se avessi visionato il video completo.\n")
+        f.write("Per favore fornisci la tua risposta seguendo questa struttura:\n\n")
         for question in questions:
-            f.write(f"- {question}\n")
+            f.write(f"Domanda: {question}\n")
+            f.write("Risposta: \n\n")
 
     print(f"Prompt per la LLM esterna salvato su {output_txt}")
 
