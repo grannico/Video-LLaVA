@@ -1,5 +1,6 @@
 import argparse
 import os
+import json
 
 import torch
 from PIL import Image
@@ -63,8 +64,11 @@ def main(args):
         "Vengono mostrati test di tiro o prove pratiche? Se sì, su quali bersagli e con quali risultati?",
         "Viene fatto un confronto con altri modelli di fucile o armi simili?",
         "Ci sono indicazioni sull’utilizzo previsto del fucile? (Es. caccia, tiro sportivo, softair, difesa, collezionismo)",
-        "L’utente parla di pregi e difetti? Se sì, quali vengono evidenziati?",
+        "L’utente parla di pregi e difetti? Se sì, quali vengono evidenziati?"
     ]
+
+    # Dizionario per raccogliere i risultati
+    results = {}
 
     # Per ogni clip
     for clip_path in args.file:
@@ -89,8 +93,11 @@ def main(args):
         print(f"\n--- Analisi automatica di {clip_path} ---")
 
         conv = conv_templates[args.conv_mode].copy()
-
         is_first = True
+
+        clip_name = os.path.basename(clip_path)
+        results[clip_name] = {}
+
         for question in questions:
             inp = question
             print(f"{roles[0]}: {inp}")
@@ -117,7 +124,6 @@ def main(args):
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
 
-            # Gestione dello streamer opzionale
             streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) if args.live else None
 
             with torch.inference_mode():
@@ -141,6 +147,16 @@ def main(args):
             if args.debug:
                 print(f"\n[DEBUG] prompt:\n{prompt}\noutput:\n{outputs}\n")
 
+            # Salva la risposta nel dizionario dei risultati
+            results[clip_name][question] = outputs
+
+    # Salva i risultati su file JSON
+    output_filename = args.output_json if args.output_json else "results.json"
+    with open(output_filename, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=4)
+
+    print(f"\nRisultati salvati su {output_filename}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -159,6 +175,8 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--live", action="store_true",
                         help="Mostra l'output in tempo reale durante la generazione (TextStreamer)")
+    parser.add_argument("--output-json", type=str, default=None,
+                        help="File JSON dove salvare i risultati (default: results.json)")
     args = parser.parse_args()
 
     if args.input_dir:
